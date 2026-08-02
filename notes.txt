@@ -1,0 +1,10 @@
+| Function         | Meaning              |
+| ---------------- | -------------------- |
+| `VideoCapture()` | Capture/Open a video |
+| `imshow()`       | Show an image        |
+| `imread()`       | Read an image        |
+| `imwrite()`      | Write/Save an image  |
+| `putText()`      | Put text on an image |
+| `rectangle()`    | Draw a rectangle     |
+| `circle()`       | Draw a circle        |
+| `line()`         | Draw a line          |
