@@ -8,3 +8,8 @@
 | `rectangle()`    | Draw a rectangle     |
 | `circle()`       | Draw a circle        |
 | `line()`         | Draw a line          |
+
+
+#YOLO - You only look once
+- It looks at the entire image once.
+- We will use YOLOv8
