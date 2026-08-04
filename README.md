@@ -31,8 +31,8 @@ It will also generate natural language alerts using Large Language Models (LLMs)
 - Python
 - OpenCV
 - NumPy
-- PyTorch *(Coming Soon)*
-- YOLO *(Coming Soon)*
+- PyTorch 
+- YOLO =
 - LSTM *(Coming Soon)*
 - FastAPI *(Coming Soon)*
 - React *(Coming Soon)*
@@ -50,26 +50,19 @@ docs/
 
 ---
 
-## 🚀 Current Progress
-
-### ✅ Sprint 1
-
-- [x] Project setup
-- [x] Virtual environment
-- [x] Video reader
-- [x] Read frames from video
-- [x] Display first video frame
-
----
 
 ## 📅 Development Log
 
-### Sprint 1
 
 - Created project structure
 - Configured Python virtual environment
 - Implemented video ingestion module
 - Successfully extracted and displayed video frames
+- Integrated YOLOv8 object detection
+- Extracted bounding box coordinates
+- Converted class IDs to readable labels
+- Drew dynamic bounding boxes
+- Displayed dynamic object names
 
 ---
 
