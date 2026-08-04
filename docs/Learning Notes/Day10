@@ -1,0 +1,346 @@
+1. What does YOLO return?
+
+When we pass a frame to the model:
+results = model(frame)
+YOLO returns a list.
+
+Why a list?
+The Ultralytics API is designed to support both single-image and batch inference. To keep the interface consistent, it always returns a list.
+
+Example:
+
+results = [
+    Result_for_Frame1
+]
+
+If we passed multiple images:
+
+results = [
+    Result1,
+    Result2,
+    Result3
+]
+2. What is results[0]?
+results[0]
+
+returns a Results object.
+
+The Results object stores all prediction information for one image/frame.
+
+Think of it like a folder.
+
+Results
+│
+├── boxes
+├── names
+├── speed
+├── orig_img
+├── masks
+└── keypoints
+
+We mainly use:
+
+boxes
+names
+3. What is a Boxes object?
+boxes = results[0].boxes
+
+boxes is not a list.
+
+It is a Boxes object provided by Ultralytics.
+
+It contains all detected objects in the current frame.
+
+Example:
+
+Frame
+
+👤      🚗      🏍
+
+↓
+
+boxes
+
+Person
+
+Car
+
+Motorcycle
+
+Each detected object is represented as one box.
+
+4. Why do we iterate over boxes?
+for box in boxes:
+
+Because one frame can contain multiple detected objects.
+
+Example:
+
+Frame
+
+👤     🚗      🏍
+
+Iteration:
+
+Iteration 1 → Person
+
+Iteration 2 → Car
+
+Iteration 3 → Motorcycle
+
+Every object gets processed individually.
+
+5. Information stored in one detection
+
+Each box contains:
+
+a) Bounding Box Coordinates
+box.xyxy
+
+Format:
+
+x1
+
+y1
+
+x2
+
+y2
+
+Meaning:
+
+(x1,y1)
+
+Top Left
+
+↓
+
+(x2,y2)
+
+Bottom Right
+
+Used for:
+
+cv2.rectangle()
+b) Class ID
+box.cls
+
+Example:
+
+tensor([2.])
+
+Meaning:
+
+2 = Car
+
+YOLO predicts numbers, not strings.
+
+c) Confidence Score
+box.conf
+
+Example:
+
+0.91
+
+Meaning:
+
+91% confident
+
+Confidence indicates how certain the model is about its prediction.
+
+6. Why are coordinates floating-point numbers?
+
+Example:
+
+285.056
+
+397.834
+
+Neural networks perform calculations using floating-point arithmetic.
+
+OpenCV expects integer pixel coordinates.
+
+Therefore:
+
+x1 = int(x1)
+7. Why do we convert class IDs to names?
+
+YOLO predicts
+
+2
+
+Humans understand
+
+Car
+
+We use
+
+class_name = results[0].names[class_id]
+
+Dictionary:
+
+{
+0:'person',
+1:'bicycle',
+2:'car',
+...
+}
+8. Detection Flow
+Video
+   │
+   ▼
+Read Frame
+   │
+   ▼
+YOLO Model
+   │
+   ▼
+Results
+   │
+   ▼
+Boxes
+   │
+   ▼
+One Box
+   │
+   ▼
+Coordinates
+Class ID
+Confidence
+   │
+   ▼
+Draw Rectangle
+   │
+   ▼
+Draw Label
+   │
+   ▼
+Display Frame
+9. Why is cv2.rectangle() inside the loop?
+
+Wrong:
+
+for box in boxes:
+    ...
+
+cv2.rectangle(...)
+
+Correct:
+
+for box in boxes:
+
+    ...
+
+    cv2.rectangle(...)
+
+Reason:
+
+Each object needs its own rectangle.
+
+If there are 5 detected objects, the rectangle function should execute 5 times.
+
+10. Important Code
+Load Model
+model = YOLO("yolov8n.pt")
+Run Inference
+results = model(frame, verbose=False)
+Get Boxes
+boxes = results[0].boxes
+Process Every Detection
+for box in boxes:
+Get Coordinates
+x1, y1, x2, y2 = box.xyxy[0]
+Convert to Integers
+x1 = int(x1)
+y1 = int(y1)
+x2 = int(x2)
+y2 = int(y2)
+Get Class ID
+class_id = int(box.cls[0])
+Convert ID to Name
+class_name = results[0].names[class_id]
+Draw Rectangle
+cv2.rectangle(
+    frame,
+    (x1, y1),
+    (x2, y2),
+    (0,255,0),
+    2
+)
+Draw Label
+cv2.putText(
+    frame,
+    class_name,
+    (x1, y1-10),
+    cv2.FONT_HERSHEY_SIMPLEX,
+    0.7,
+    (0,255,0),
+    2
+)
+🧠 Interview Questions
+1. What does YOLO return?
+
+Answer:
+
+YOLO returns a list of Results objects. Each Results object contains all predictions for one image or video frame.
+
+2. What is a Results object?
+
+Answer:
+
+The Results object is a container that stores prediction information such as bounding boxes, class IDs, confidence scores, and metadata for a single image or frame.
+
+3. What is a Boxes object?
+
+Answer:
+
+The Boxes object contains all detected objects in a frame. Each detection includes bounding box coordinates, class ID, and confidence score.
+
+4. What information does one YOLO detection contain?
+
+Answer:
+
+A single detection contains:
+
+Bounding box coordinates (xyxy)
+Class ID (cls)
+Confidence score (conf)
+5. Why do we convert class IDs to names?
+
+Answer:
+
+YOLO predicts numeric class IDs because they are computationally efficient. We use the model's class dictionary to convert them into readable class names.
+
+6. Why do we convert coordinates to integers?
+
+Answer:
+
+YOLO predicts floating-point coordinates, while OpenCV drawing functions require integer pixel coordinates.
+
+7. Why do we use a for box in boxes loop?
+
+Answer:
+
+A frame can contain multiple detected objects. The loop processes each object individually so that every object gets its own bounding box and label.
+
+8. What is inference?
+
+Answer:
+
+Inference is the process of using a trained model to make predictions on new input data without updating the model's weights.
+
+9. What is the difference between training and inference?
+Training	Inference
+Model learns from data	Model uses learned knowledge
+Updates weights	Weights remain unchanged
+Computationally expensive	Faster than training
+Done once or occasionally	Done every time a prediction is needed
+⭐ Key Takeaways
+model(frame) runs object detection on one frame.
+YOLO returns a list of Results objects.
+Each Results object contains a Boxes object.
+Each box represents one detected object.
+A detection consists of coordinates, class ID, and confidence score.
+We convert tensors to Python values before using them.
+We iterate over boxes because one frame can contain multiple objects.
+We draw one rectangle and one label for each detected object.

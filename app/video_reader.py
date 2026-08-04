@@ -3,6 +3,11 @@ from ultralytics import YOLO
 from config import VIDEO_PATH
 from config import WINDOW_NAME
 
+BOX_COLOR = (0,255,0)
+TEXT_COLOR = (0,255,0)
+BOX_THICKNESS = 2
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
 
 '''cv2.VideoCapture() creates an object that opens a video source such as a webcam, 
 video file, or IP camera stream,allowing frames to be read sequentially.'''
@@ -30,54 +35,77 @@ def run():
         if not success:
             break;
 
+        frame_number+=1
+
+        if frame_number % 3 == 0:
+            results = model(frame, verbose=False)
+            boxes = results[0].boxes
+
+
         results = model(frame, verbose=False)
-        print(dir(results[0]))
+        boxes = results[0].boxes
 
-        if  success:
-            text = f"FPS : {fps:.2f}"
-            frame_text = f"Frame : {frame_number}"
+        text = f"FPS : {fps:.2f}"
+        frame_text = f"Frame : {frame_number}"
+        
+        cv2.putText(
+        frame,    #Image to write
+        text ,     #Text tp write
+        (10,30),    #Position(x,y)
+        FONT,  #Font
+        1,          #Font size
+        (0,0,0),    #Color
+        2           #Thickness
+        )
+        
+        cv2.putText(
+        frame, 
+        frame_text, 
+        (10,70),
+        FONT, 
+        1,
+        (0,0,0),
+        2
+        )
+        
+        
+        
 
-            cv2.putText(
-                frame,    #Image to write
-                text ,     #Text tp write
-                (10,30),    #Position(x,y)
-                cv2.FONT_HERSHEY_SIMPLEX,  #Font
-                1,          #Font size
-                (0,0,0),    #Color
-                2           #Thickness
-            )
+        for box in boxes:
+            print(box)
+            print("-------------------")
+            x1, y1, x2, y2 = box.xyxy[0]
+            x1 = int(x1)
+            y1 = int(y1)
+            x2 = int(x2)
+            y2 = int(y2)
 
-            cv2.putText(
-                frame, 
-                frame_text, 
-                (10,70),
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                1,
-                (0,0,0),
-                2
-            )
-
-            frame_number+=1
-
+            
             cv2.rectangle(
                 frame,
-                (100,100),
-                (300,250),
-                (0,255,0), #BGR format
-                2           #Thickness of the border
+                (x1, y1),
+                (x2, y2),
+                BOX_COLOR,
+                BOX_THICKNESS
             )
 
-            frame_text2="Car"
+            class_id = int(box.cls[0])
+            class_name = results[0].names[class_id]
 
+                    
             cv2.putText(
-                frame , 
-                frame_text2 , 
-                (100,90), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                1,
-                (0,255,0),
-                2
+            frame , 
+            class_name , 
+            (x1,y1-10), 
+            FONT, 
+            1,
+            (0,255,0),
+            2
             )
+
+
+        if len(boxes) > 0:
+            print("Objects detected:", len(boxes))
 
             cv2.imshow("Frame", frame)
             key=cv2.waitKey(delay)    #After showing the current frame, wait 30 milliseconds before moving to the next frame
