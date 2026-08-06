@@ -79,7 +79,6 @@ def run():
             y1 = int(y1)
             x2 = int(x2)
             y2 = int(y2)
-
             
             cv2.rectangle(
                 frame,
@@ -91,11 +90,15 @@ def run():
 
             class_id = int(box.cls[0])
             class_name = results[0].names[class_id]
+            
+            confidence = float(box.conf[0])
+            label = f"{class_name} {confidence*100:.1f}%"
+
 
                     
             cv2.putText(
             frame , 
-            class_name , 
+            label , 
             (x1,y1-10), 
             FONT, 
             1,
