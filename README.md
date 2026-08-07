@@ -32,7 +32,7 @@ It will also generate natural language alerts using Large Language Models (LLMs)
 - OpenCV
 - NumPy
 - PyTorch 
-- YOLO =
+- YOLO 
 - LSTM *(Coming Soon)*
 - FastAPI *(Coming Soon)*
 - React *(Coming Soon)*
@@ -63,6 +63,15 @@ docs/
 - Converted class IDs to readable labels
 - Drew dynamic bounding boxes
 - Displayed dynamic object names
+ - Integrated ByteTrack with YOLOv8
+- Assigned persistent tracking IDs
+- Displayed tracking IDs on detected objects
+- Calculated object centroids
+- Implemented virtual counting line
+- Built the foundation for vehicle counting using:
+  - Track IDs
+  - Previous position dictionary
+  - Counted ID set
 
 ---
 
