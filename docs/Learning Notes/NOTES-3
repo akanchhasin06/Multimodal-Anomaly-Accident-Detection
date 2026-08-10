@@ -1,0 +1,1322 @@
+============================================================
+MULTIMODAL ANOMALY & ACCIDENT DETECTION
+THEORY NOTES — AFTER BYTETRACK
+============================================================
+
+PROJECT STAGE
+------------------------------------------------------------
+
+Current pipeline:
+
+Video
+  ↓
+YOLO Object Detection
+  ↓
+ByteTrack Multi-Object Tracking
+  ↓
+Persistent Track IDs
+  ↓
+Centroid Extraction
+  ↓
+Trajectory History
+  ↓
+Motion Features
+  ↓
+Temporal Feature Sequence
+  ↓
+LSTM Temporal Anomaly Detection
+  ↓
+Vision-Language LLM
+  ↓
+Incident Interpretation
+  ↓
+Alert / Report
+
+
+============================================================
+1. CENTROID-BASED OBJECT REPRESENTATION
+============================================================
+
+A bounding box represents the spatial location of a detected
+object in an image.
+
+A bounding box is generally represented as:
+
+(x1, y1, x2, y2)
+
+where:
+
+x1 = left coordinate
+y1 = top coordinate
+x2 = right coordinate
+y2 = bottom coordinate
+
+
+The centroid is the approximate center point of the bounding
+box.
+
+Centroid coordinates:
+
+center_x = (x1 + x2) / 2
+center_y = (y1 + y2) / 2
+
+In implementation, integer division may be used:
+
+center_x = (x1 + x2) // 2
+center_y = (y1 + y2) // 2
+
+
+Why use a centroid?
+
+The complete bounding box contains more information than is
+needed for basic trajectory analysis.
+
+For motion analysis, we mainly need a representative spatial
+position of the object.
+
+Therefore:
+
+Bounding Box
+     ↓
+Centroid
+     ↓
+(x, y) position
+
+
+The centroid provides a simple representation that allows us
+to track how an object moves through the scene over time.
+
+
+Example:
+
+Frame 1:
+Vehicle #3 → (320, 180)
+
+Frame 2:
+Vehicle #3 → (325, 185)
+
+Frame 3:
+Vehicle #3 → (330, 191)
+
+The sequence of these coordinates represents the movement
+of the vehicle.
+
+
+============================================================
+2. TRAJECTORY
+============================================================
+
+A trajectory is the sequence of spatial positions occupied by
+an object over time.
+
+For a tracked vehicle:
+
+Trajectory =
+[(x1,y1), (x2,y2), (x3,y3), ...]
+
+
+Example:
+
+Vehicle #3:
+
+(320,180)
+(325,185)
+(330,191)
+(336,198)
+(343,205)
+
+
+This tells us how the vehicle moved through the scene.
+
+Trajectory is important because accident detection is not only
+a spatial problem; it is also a temporal problem.
+
+A single frame may show a vehicle in a completely normal state.
+
+However, a sequence of frames may reveal:
+
+- sudden movement
+- sudden stopping
+- abrupt direction change
+- unusual trajectory
+- collision-like movement
+- interaction with another vehicle
+
+
+Therefore:
+
+Single frame → What is happening now?
+
+Trajectory → How has the object been behaving over time?
+
+
+============================================================
+3. TRAJECTORY HISTORY
+============================================================
+
+Trajectory history is the stored sequence of previous positions
+for each tracked object.
+
+Because ByteTrack provides a persistent Track ID, we can
+maintain a separate trajectory for every object.
+
+Conceptually:
+
+Track ID 3:
+[(320,180), (325,185), (330,191), ...]
+
+Track ID 4:
+[(500,300), (495,295), (490,289), ...]
+
+
+The Track ID acts as the key connecting observations from
+different frames.
+
+
+Conceptual data structure:
+
+trajectory_history = {
+
+    3: [
+        (320,180),
+        (325,185),
+        (330,191)
+    ],
+
+    4: [
+        (500,300),
+        (495,295),
+        (490,289)
+    ]
+}
+
+
+Important relationship:
+
+ByteTrack
+    ↓
+Persistent ID
+    ↓
+Position associated with that ID
+    ↓
+Trajectory history
+
+
+Without object tracking, it would be difficult to know whether
+a detection in the next frame belongs to the same vehicle.
+
+
+============================================================
+4. WHY TRAJECTORY HISTORY IS IMPORTANT
+============================================================
+
+Trajectory history allows the system to analyze behavior rather
+than just detect objects.
+
+For example:
+
+Normal vehicle:
+
+Frame 1 → (100,200)
+Frame 2 → (105,202)
+Frame 3 → (110,204)
+Frame 4 → (115,206)
+
+The movement is relatively smooth.
+
+Potentially abnormal movement:
+
+Frame 1 → (100,200)
+Frame 2 → (105,202)
+Frame 3 → (110,204)
+Frame 4 → (150,250)
+
+The sudden change in position may indicate abnormal movement.
+
+However, this does NOT automatically mean an accident.
+
+Other explanations may include:
+
+- camera perspective
+- detection noise
+- tracking error
+- vehicle entering a different part of the scene
+- camera movement
+
+Therefore, multiple temporal observations are required.
+
+
+============================================================
+5. SLIDING WINDOW
+============================================================
+
+A sliding window is a fixed-length sequence of recent
+observations.
+
+Instead of storing the entire history of an object indefinitely,
+we retain only the most recent N observations.
+
+In our project:
+
+N = 30 frames
+
+
+Example:
+
+First window:
+
+Frames 1–30
+
+
+Next window:
+
+Frames 2–31
+
+
+Next:
+
+Frames 3–32
+
+
+And so on.
+
+
+This is called a sliding window because the window continuously
+moves forward through the video.
+
+
+Advantages:
+
+1. Controls memory usage.
+
+2. Provides a fixed-size input to the temporal model.
+
+3. Allows the model to focus on recent behavior.
+
+4. Makes real-time temporal analysis possible.
+
+5. Provides consistent input dimensions for the LSTM.
+
+
+The project specification also proposes a 30-frame sliding
+window for temporal anomaly analysis.
+
+
+============================================================
+6. WHY 30 FRAMES?
+============================================================
+
+A temporal model requires a sequence of observations rather
+than an isolated observation.
+
+Using a fixed 30-frame window provides a manageable temporal
+context.
+
+For example:
+
+30 frames × feature vector
+
+can represent the recent behavior of a vehicle.
+
+The exact temporal duration represented by 30 frames depends
+on the video's FPS.
+
+For a video running at 30 FPS:
+
+30 frames ≈ 1 second
+
+For a video running at 25 FPS:
+
+30 frames ≈ 1.2 seconds
+
+
+Therefore, the number of frames and the actual time duration
+are related through the frame rate.
+
+
+============================================================
+7. PREVIOUS POSITION
+============================================================
+
+To calculate movement, we need the current position and the
+position from the previous frame.
+
+For every Track ID, we maintain:
+
+Previous position = (previous_x, previous_y)
+
+Current position = (current_x, current_y)
+
+
+Example:
+
+Previous:
+(320,180)
+
+Current:
+(325,185)
+
+
+This allows us to calculate the object's movement between
+consecutive frames.
+
+
+============================================================
+8. DISPLACEMENT
+============================================================
+
+Displacement describes how much the object's position changed
+between two consecutive frames.
+
+Horizontal displacement:
+
+dx = current_x - previous_x
+
+
+Vertical displacement:
+
+dy = current_y - previous_y
+
+
+Example:
+
+Previous position:
+(320,180)
+
+Current position:
+(325,185)
+
+
+Therefore:
+
+dx = 325 - 320 = 5
+
+dy = 185 - 180 = 5
+
+
+Interpretation:
+
+dx > 0
+→ movement toward the right
+
+dx < 0
+→ movement toward the left
+
+dy > 0
+→ movement toward the bottom of the image
+
+dy < 0
+→ movement toward the top of the image
+
+
+Important:
+
+OpenCV/image coordinates normally use the top-left corner
+as the origin:
+
+(0,0)
+  ─────────→ X
+  |
+  |
+  ↓
+  Y
+
+
+Therefore, increasing Y means moving downward in the image.
+
+
+============================================================
+9. MOTION MAGNITUDE / SPEED
+============================================================
+
+We calculate the magnitude of movement from dx and dy.
+
+speed = sqrt(dx² + dy²)
+
+
+In Python:
+
+speed = math.hypot(dx, dy)
+
+
+Example:
+
+dx = 3
+dy = 4
+
+speed = sqrt(3² + 4²)
+
+speed = sqrt(9 + 16)
+
+speed = 5
+
+
+This represents the magnitude of the object's movement between
+two frames.
+
+
+IMPORTANT:
+
+Our current speed is NOT physical vehicle speed.
+
+It is:
+
+pixels per frame
+
+
+It should NOT be interpreted directly as:
+
+km/h
+or
+m/s
+
+
+To obtain real-world speed, additional information would be
+required, such as:
+
+- camera calibration
+- scene geometry
+- known physical distance
+- camera parameters
+- perspective transformation
+
+
+For the temporal ML model, relative image-space motion can
+still be useful as a feature.
+
+
+============================================================
+10. VELOCITY VS SPEED
+============================================================
+
+Speed and velocity are related but not identical.
+
+Speed is a scalar quantity.
+
+It describes only the magnitude of movement.
+
+Velocity is a vector quantity.
+
+It contains both:
+
+- magnitude
+- direction
+
+
+In our current implementation:
+
+dx and dy
+→ directional movement information
+
+sqrt(dx² + dy²)
+→ movement magnitude
+
+
+Therefore:
+
+(dx, dy)
+→ directional motion
+
+math.hypot(dx, dy)
+→ speed/movement magnitude
+
+
+For a more complete temporal representation, both directional
+components and magnitude can be retained.
+
+
+============================================================
+11. PREVIOUS SPEED
+============================================================
+
+To calculate acceleration-like behavior, we need to compare
+current speed with the previous speed.
+
+For every Track ID:
+
+previous_speed = speed measured in the previous frame
+
+
+Example:
+
+Frame 1:
+Speed = 5
+
+Frame 2:
+Speed = 7
+
+Frame 3:
+Speed = 4
+
+
+This allows us to measure how movement magnitude changes
+over time.
+
+
+============================================================
+12. ACCELERATION
+============================================================
+
+Acceleration describes the change in velocity over time.
+
+In physical systems:
+
+acceleration = change in velocity / change in time
+
+
+In our current feature-engineering stage, we use a simplified
+image-space quantity:
+
+acceleration_feature =
+current_speed - previous_speed
+
+
+Example:
+
+Previous speed = 5
+
+Current speed = 8
+
+Acceleration feature = 8 - 5 = +3
+
+
+If:
+
+Previous speed = 8
+
+Current speed = 5
+
+Acceleration feature = 5 - 8 = -3
+
+
+Positive value:
+→ movement magnitude increased
+
+Negative value:
+→ movement magnitude decreased
+
+
+IMPORTANT:
+
+This is NOT physical acceleration in m/s².
+
+It is a change in image-space displacement magnitude.
+
+Therefore it is better understood as a:
+
+motion-change feature
+
+rather than true physical acceleration.
+
+
+============================================================
+13. WHY ACCELERATION IS USEFUL
+============================================================
+
+Many abnormal events involve changes in motion.
+
+Normal movement may look like:
+
+Speed:
+4.0
+4.2
+4.4
+4.5
+4.6
+
+
+Potentially unusual movement:
+
+Speed:
+4.0
+4.2
+4.3
+12.0
+3.0
+
+
+Large changes may indicate:
+
+- sudden braking
+- sudden acceleration
+- collision
+- abrupt maneuver
+- tracking instability
+- perspective effects
+
+
+Therefore, acceleration-like features can provide useful
+information to a temporal anomaly detection model.
+
+
+However:
+
+Large acceleration ≠ accident
+
+
+A single unusual value should not be sufficient to declare an
+accident.
+
+The system should consider a sequence of observations.
+
+
+============================================================
+14. TEMPORAL FEATURES
+============================================================
+
+A temporal feature describes how an object's state changes
+over time.
+
+Our current feature vector contains:
+
+[x, y, dx, dy, speed, acceleration]
+
+
+Where:
+
+x
+→ current horizontal position
+
+y
+→ current vertical position
+
+dx
+→ horizontal displacement
+
+dy
+→ vertical displacement
+
+speed
+→ magnitude of image-space movement
+
+acceleration
+→ change in movement magnitude
+
+
+Example:
+
+[
+    325,
+    187,
+    5,
+    7,
+    8.60,
+    2.10
+]
+
+
+This represents the state and motion of one tracked object
+at one point in time.
+
+
+============================================================
+15. FEATURE HISTORY
+============================================================
+
+Instead of keeping only one feature vector, we store the
+feature vector for multiple consecutive frames.
+
+For Track ID 3:
+
+Frame 1:
+[x1, y1, dx1, dy1, speed1, acceleration1]
+
+Frame 2:
+[x2, y2, dx2, dy2, speed2, acceleration2]
+
+...
+
+Frame 30:
+[x30, y30, dx30, dy30, speed30, acceleration30]
+
+
+This produces a temporal sequence.
+
+
+Conceptually:
+
+Feature history:
+
+[
+    [x1, y1, dx1, dy1, s1, a1],
+    [x2, y2, dx2, dy2, s2, a2],
+    ...
+    [x30, y30, dx30, dy30, s30, a30]
+]
+
+
+The sequence contains information about how the vehicle's
+behavior evolved over time.
+
+
+============================================================
+16. TEMPORAL SEQUENCE
+============================================================
+
+A temporal sequence is an ordered collection of observations
+over time.
+
+For our system:
+
+One observation =
+[x, y, dx, dy, speed, acceleration]
+
+
+One sequence =
+30 consecutive observations
+
+
+Therefore:
+
+Sequence shape conceptually:
+
+30 × 6
+
+
+where:
+
+30 = number of time steps
+
+6 = number of features per time step
+
+
+This is the type of sequential representation that can later
+be provided to a temporal model such as an LSTM.
+
+
+============================================================
+17. WHY NOT CLASSIFY FROM ONE FRAME?
+============================================================
+
+Accidents and anomalies are generally temporal events.
+
+A single frame may show:
+
+- two vehicles near each other
+- a vehicle stopped
+- a vehicle changing direction
+
+
+None of these necessarily means an accident occurred.
+
+
+Example:
+
+Frame A:
+Two vehicles are close.
+
+This alone does not tell us whether they collided.
+
+
+But:
+
+Frame A:
+Vehicles approaching each other
+
+Frame B:
+Distance decreases
+
+Frame C:
+Very close interaction
+
+Frame D:
+Sudden motion change
+
+Frame E:
+Vehicles change trajectories
+
+
+The sequence provides significantly more information.
+
+
+Therefore:
+
+Single-frame analysis
+→ spatial understanding
+
+
+Multi-frame analysis
+→ spatial + temporal understanding
+
+
+This is why temporal modeling is important for accident detection.
+
+
+============================================================
+18. WHY RULE-BASED ACCIDENT DETECTION IS NOT ENOUGH
+============================================================
+
+A simple approach could be:
+
+if acceleration > threshold:
+    accident = True
+
+
+This is problematic.
+
+A high acceleration-like value can occur because of:
+
+- camera perspective
+- object detection noise
+- tracking errors
+- sudden but normal driving
+- vehicle entering/leaving the frame
+- changes in object scale
+
+
+Therefore, a single threshold can produce many false positives.
+
+
+A better approach is:
+
+Multiple features
+       ↓
+Multiple consecutive frames
+       ↓
+Temporal model
+       ↓
+Anomaly probability
+
+
+This is why our project moves toward an LSTM-based temporal
+anomaly classifier.
+
+
+============================================================
+19. LSTM — WHY WE ARE USING IT
+============================================================
+
+LSTM stands for:
+
+Long Short-Term Memory
+
+
+LSTM is a type of Recurrent Neural Network (RNN).
+
+It is designed to process sequential data and learn patterns
+across time.
+
+
+Traditional feed-forward neural networks generally treat
+inputs independently.
+
+A temporal model such as LSTM can maintain information about
+previous observations while processing new observations.
+
+
+Conceptually:
+
+Frame 1
+  ↓
+Frame 2
+  ↓
+Frame 3
+  ↓
+...
+Frame 30
+  ↓
+LSTM
+  ↓
+Temporal representation
+  ↓
+Anomaly prediction
+
+
+LSTM is useful because accident behavior is not necessarily
+visible in one observation.
+
+The model can learn patterns such as:
+
+normal movement
+→ sudden change
+→ interaction
+→ abnormal movement
+
+
+rather than relying on one isolated frame.
+
+
+============================================================
+20. LSTM INPUT FOR OUR PROJECT
+============================================================
+
+Our intended input sequence is:
+
+30 time steps
+
+Each time step contains:
+
+[x, y, dx, dy, speed, acceleration]
+
+
+Therefore conceptually:
+
+Input:
+
+30 × 6
+
+
+The LSTM processes this sequence and learns temporal patterns.
+
+
+Conceptual pipeline:
+
+YOLO
+ ↓
+ByteTrack
+ ↓
+Track ID
+ ↓
+Centroid
+ ↓
+Motion features
+ ↓
+30-frame sequence
+ ↓
+LSTM
+ ↓
+Anomaly score / classification
+
+
+============================================================
+21. IMPORTANT DISTINCTION:
+TRAINING VS LIVE INFERENCE
+============================================================
+
+Our current video pipeline can create:
+
+30-frame feature sequences.
+
+
+However, these sequences alone are NOT enough to train an
+LSTM.
+
+
+Why?
+
+Because the model needs labels.
+
+
+For example:
+
+Sequence 1 → Normal
+Sequence 2 → Normal
+Sequence 3 → Accident
+Sequence 4 → Normal
+Sequence 5 → Anomaly
+
+
+The training process learns the relationship between:
+
+Temporal feature sequence
+        +
+Ground-truth label
+        ↓
+LSTM
+
+
+After training, the model can receive a new sequence:
+
+New 30-frame sequence
+        ↓
+Trained LSTM
+        ↓
+Anomaly probability / class
+
+
+Therefore:
+
+Feature extraction
+≠
+Model training
+
+
+We have currently completed the feature-extraction foundation.
+
+
+============================================================
+22. LABELLED DATA
+============================================================
+
+For supervised temporal anomaly detection, we need data where
+the relevant events are labelled.
+
+Possible categories include:
+
+Normal
+Accident
+Abnormal movement
+Collision
+Other anomalies
+
+
+The project specification identifies candidate datasets such
+as:
+
+- UCF-Crime
+- XD-Violence
+- DoTA
+
+
+The exact dataset and label structure need to be evaluated
+before training the LSTM.
+
+
+Important principle:
+
+The dataset must match the actual task.
+
+A dataset containing generic anomalies may not automatically
+provide the exact labels needed for vehicle accident detection.
+
+
+============================================================
+23. WHY BYTE TRACK + TRAJECTORY + LSTM WORK TOGETHER
+============================================================
+
+Each component has a different responsibility.
+
+YOLO:
+
+"What objects are present?"
+
+
+ByteTrack:
+
+"Which detection belongs to which object across frames?"
+
+
+Centroid:
+
+"Where is that object?"
+
+
+Trajectory:
+
+"Where has that object been?"
+
+
+Motion features:
+
+"How is that object moving?"
+
+
+LSTM:
+
+"Does the sequence of movement represent a learned abnormal
+pattern?"
+
+
+Vision-Language LLM:
+
+"What is happening in the scene, and how can it be described
+in natural language?"
+
+
+Therefore:
+
+YOLO
+→ Detection
+
+
+ByteTrack
+→ Identity
+
+
+Trajectory
+→ History
+
+
+Motion features
+→ Behavior representation
+
+
+LSTM
+→ Temporal anomaly detection
+
+
+Vision-Language LLM
+→ High-level scene interpretation
+
+
+============================================================
+24. CURRENT PROJECT ARCHITECTURE
+============================================================
+
+Our current and planned architecture is:
+
+                    VIDEO
+                      ↓
+                   OpenCV
+                      ↓
+                 YOLOv8
+                      ↓
+              Object Detection
+                      ↓
+                  ByteTrack
+                      ↓
+              Persistent IDs
+                      ↓
+                  Centroid
+                      ↓
+             Trajectory History
+                      ↓
+               dx / dy
+                      ↓
+           Motion Magnitude
+                      ↓
+             Acceleration
+                      ↓
+          30-Frame Sequence
+                      ↓
+                    LSTM
+                      ↓
+           Temporal Anomaly Score
+                      ↓
+            Vision-Language LLM
+                      ↓
+          Incident Interpretation
+                      ↓
+           Natural-Language Alert
+
+
+============================================================
+25. WHAT WE HAVE COMPLETED
+============================================================
+
+Completed foundation:
+
+1. Video ingestion using OpenCV
+
+2. FPS and frame processing
+
+3. YOLO object detection
+
+4. Bounding-box extraction
+
+5. Confidence extraction
+
+6. ByteTrack multi-object tracking
+
+7. Persistent Track IDs
+
+8. Centroid calculation
+
+9. Trajectory history
+
+10. 30-frame sliding trajectory window
+
+11. Horizontal and vertical displacement
+
+12. Image-space movement magnitude
+
+13. Previous-speed tracking
+
+14. Acceleration-like motion feature
+
+15. 30-frame temporal feature sequence
+
+
+============================================================
+26. CURRENT STATUS
+============================================================
+
+Current stage:
+
+OBJECT TRACKING
+       ↓
+TRAJECTORY
+       ↓
+MOTION FEATURES
+       ↓
+30-FRAME TEMPORAL SEQUENCE
+       ↓
+[CURRENT POINT]
+       ↓
+LABELLED DATASET
+       ↓
+LSTM TRAINING
+       ↓
+LSTM INFERENCE
+       ↓
+VISION-LANGUAGE LLM
+
+
+The next major challenge is not more OpenCV code.
+
+The next major challenge is preparing appropriate labelled
+temporal data for training the LSTM.
+
+
+============================================================
+27. INTERVIEW SUMMARY
+============================================================
+
+If asked:
+
+"What have you implemented so far?"
+
+Answer:
+
+"I built a real-time video analytics pipeline using YOLO for
+object detection and ByteTrack for persistent multi-object
+tracking. For each tracked vehicle, I extract centroid
+positions and maintain a sliding trajectory history. From
+consecutive positions I derive horizontal and vertical
+displacement, movement magnitude, and acceleration-like
+features. These features are organized into 30-frame temporal
+sequences, which form the input foundation for the LSTM-based
+temporal anomaly detection stage."
+
+
+If asked:
+
+"Why use trajectory information?"
+
+Answer:
+
+"Because an accident is a temporal event. A single frame can
+identify vehicles, but the sequence of their movements can
+reveal abnormal behavior such as sudden changes in direction,
+motion or interactions."
+
+
+If asked:
+
+"Why use an LSTM?"
+
+Answer:
+
+"LSTM is designed for sequential data and can learn temporal
+dependencies across multiple observations. In our system, it
+will analyze sequences of vehicle motion features rather than
+making an anomaly decision from a single frame."
+
+
+If asked:
+
+"Is your speed real-world speed?"
+
+Answer:
+
+"No. At the current stage it is image-space displacement per
+frame. Converting it to physical speed would require camera
+calibration or scene-scale information."
+
+
+If asked:
+
+"Why not simply use acceleration thresholds?"
+
+Answer:
+
+"Because a large motion change does not necessarily indicate
+an accident. It can result from perspective, tracking noise,
+or normal driving. A temporal model can consider the behavior
+across multiple frames and reduce reliance on a single
+threshold."
+
+
+============================================================
+END OF NOTES
+============================================================

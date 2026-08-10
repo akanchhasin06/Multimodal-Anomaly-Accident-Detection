@@ -45,6 +45,8 @@ def run():
 
     previous_positions = {}
     trajectory_history = {}
+    previous_speeds = {}
+    feature_history = {}
 
     counted_ids = set()
     vehicle_count = 0
@@ -190,12 +192,43 @@ def run():
 
                     speed = math.hypot(dx, dy)
 
-                    print(
-                        f"ID: {track_id} | "
-                        f"dx: {dx} | "
-                        f"dy: {dy} | "
-                        f"Speed: {speed:.2f}"
+                    previous_speed = previous_speeds.get(track_id)
+
+                    if previous_speed is not None:
+                        acceleration = speed - previous_speed
+                    else:
+                        acceleration = 0.0
+
+                    previous_speeds[track_id] = speed
+
+                    if track_id not in feature_history:
+                        feature_history[track_id] = []
+
+                    feature_history[track_id].append(
+                        [
+                            center_x,
+                            center_y,
+                            dx,
+                            dy,
+                            speed,
+                            acceleration
+                        ]
                     )
+
+                    
+
+                    if len(feature_history[track_id]) > 30:
+                        feature_history[track_id].pop(0)
+
+                    if len(feature_history[track_id]) == 30 and frame_number % 30 == 0:
+                        print(f"Track {track_id}: 30-frame sequence ready")  
+
+                    previous_positions[track_id] = (
+                        center_x,
+                        center_y
+                    )  
+
+                    
 
                     # -----------------------------
                     # Vehicle Counting
