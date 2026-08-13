@@ -14,5 +14,5 @@ models/
 
 .vscode/
 .idea/
-
-.notes.txt
+doc/
+features.csv
