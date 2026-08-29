@@ -1,18 +1,30 @@
+# Virtual environment
+.venv/
+
+# Python cache
 __pycache__/
 *.pyc
-.venv/
-venv/
-.env
 
-datasets/
+# Generated datasets
+dataset_features/
+sequences/
+
+# Generated feature files
+features.csv
+*.npy
+
+# Trained models
 models/
-*.pth
 *.pt
-*.onnx
+*.pth
 
-.ipynb_checkpoints/
+# Dataset
+C:\Datasets\
+UCF-Crime/
 
+# IDE
 .vscode/
 .idea/
-doc/
-features.csv
+
+# Python
+*.log

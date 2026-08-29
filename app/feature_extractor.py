@@ -45,10 +45,11 @@ def extract_features(video_path, output_csv):
 
             frame_number+=1
             
-            results=model.track(
+            results = model.track(
                 frame,
                 persist=True,
                 tracker="bytetrack.yaml",
+                device=0,
                 verbose=False
             )
 
