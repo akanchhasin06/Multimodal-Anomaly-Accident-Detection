@@ -38,3 +38,11 @@ dataset_features/
 dataset_features_v2/
 sequences/
 sequences_v2/
+
+# Experimental / debugging scripts
+app/optimize_threshold.py
+app/threshold_analysis.py
+test_feature.py
+
+# Local notes
+docs/Learning Notes/
