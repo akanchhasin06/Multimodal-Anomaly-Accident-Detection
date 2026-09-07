@@ -1,80 +1,100 @@
 # 🚨 Multimodal Anomaly & Accident Detection System
 
+An AI-powered surveillance system that combines **computer vision, object tracking, temporal anomaly detection, and Vision-Language Models** to detect abnormal events and generate contextual incident reports from video footage.
+
+---
+
 ## 📌 Overview
 
-This project aims to build an AI-powered intelligent surveillance system capable of detecting anomalies and accidents from CCTV footage using Computer Vision and Deep Learning.
+Traditional surveillance systems mainly rely on object detection and predefined rules. This project combines spatial, temporal, and semantic analysis to identify potentially abnormal events.
 
-The system will detect abnormal events such as:
+The system processes surveillance video through the following pipeline:
 
-- Road accidents
-- Fire and smoke
-- Violence/Fights
-- Suspicious activities
+**Video → YOLOv8 → ByteTrack → Motion Features → GRU → Gemini Vision → Incident Report**
 
-It will also generate natural language alerts using Large Language Models (LLMs) and provide a real-time monitoring dashboard.
+The system can detect abnormal motion patterns and, when an anomaly is detected, analyze the corresponding frame using a Vision-Language Model to provide contextual information such as incident type, severity, involved objects, and environment.
 
 ---
 
 ## 🎯 Objectives
 
-- Read and process CCTV video streams
-- Detect objects using YOLO
-- Analyze temporal events using LSTM
-- Detect anomalies and accidents
-- Generate AI-powered alerts
-- Build a real-time dashboard
+- Process surveillance/CCTV video footage
+- Detect objects using YOLOv8
+- Track objects across frames using ByteTrack
+- Extract temporal motion features from tracked objects
+- Detect anomalous motion using a GRU-based deep learning model
+- Capture the frame associated with the first detected anomaly
+- Analyze the incident using a Vision-Language Model
+- Generate structured incident reports
+- Expose the complete detection pipeline through FastAPI
+- Produce an annotated output video
 
 ---
 
-## 🛠️ Tech Stack
-
-- Python
-- OpenCV
-- NumPy
-- PyTorch 
-- YOLO 
-- LSTM *(Coming Soon)*
-- FastAPI *(Coming Soon)*
-- React *(Coming Soon)*
-
----
-
-## 📂 Project Structure
+## 🧠 System Architecture
 
 ```text
-app/
-videos/
-outputs/
-docs/
-```
-
----
-
-
-## 📅 Development Log
-
-
-- Created project structure
-- Configured Python virtual environment
-- Implemented video ingestion module
-- Successfully extracted and displayed video frames
-- Integrated YOLOv8 object detection
-- Extracted bounding box coordinates
-- Converted class IDs to readable labels
-- Drew dynamic bounding boxes
-- Displayed dynamic object names
- - Integrated ByteTrack with YOLOv8
-- Assigned persistent tracking IDs
-- Displayed tracking IDs on detected objects
-- Calculated object centroids
-- Implemented virtual counting line
-- Built the foundation for vehicle counting using:
-  - Track IDs
-  - Previous position dictionary
-  - Counted ID set
-
----
-
-## 👨‍💻 Author
-
-Akanchha Singh
+                    CCTV / Video
+                         │
+                         ▼
+                 ┌──────────────┐
+                 │   FastAPI    │
+                 │ Video Upload │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │   YOLOv8     │
+                 │Object Detect │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │  ByteTrack   │
+                 │Object Tracking│
+                 └──────┬───────┘
+                        │
+                        ▼
+             ┌──────────────────────┐
+             │   Motion Features    │
+             │                      │
+             │ • dx                 │
+             │ • dy                 │
+             │ • speed              │
+             │ • acceleration       │
+             │ • direction change   │
+             │ • jerk               │
+             └──────────┬───────────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │     GRU      │
+                 │ Temporal     │
+                 │ Anomaly      │
+                 │ Detection    │
+                 └──────┬───────┘
+                        │
+                 Anomaly Detected
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ Incident     │
+                 │ Frame        │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │ Gemini Vision│
+                 │ VLM Analysis │
+                 └──────┬───────┘
+                        │
+                        ▼
+              ┌────────────────────┐
+              │ Incident Report    │
+              │                    │
+              │ • Incident Type    │
+              │ • Severity         │
+              │ • Objects          │
+              │ • Environment      │
+              │ • Explanation      │
+              └────────────────────┘
