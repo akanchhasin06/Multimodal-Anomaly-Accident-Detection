@@ -21,20 +21,11 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    raise RuntimeError(
-        "GEMINI_API_KEY not found in .env"
-    )
+    raise RuntimeError("GEMINI_API_KEY not found in .env")
 
-gemini_client = genai.Client(
-    api_key=GEMINI_API_KEY
-)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 GEMINI_MODEL = "gemini-3.7-flash"
-
-
-# ============================================================
-# PATHS
-# ============================================================
 
 YOLO_MODEL_PATH = "yolov8n.pt"
 
@@ -43,19 +34,7 @@ GRU_MODEL_PATH = "models/best_anomaly_gru_v2.pt"
 MEAN_PATH = "models/feature_mean_v2.npy"
 STD_PATH = "models/feature_std_v2.npy"
 
-INPUT_VIDEO = "videos/sample2.mp4"
-
-OUTPUT_VIDEO = "outputs/anomaly_result_v2.mp4"
-
-REPORT_PATH = "outputs/incident_report.json"
-
-
-# ============================================================
-# SETTINGS
-# ============================================================
-
 SEQUENCE_LENGTH = 30
-
 ANOMALY_THRESHOLD = 0.5
 
 DEVICE = torch.device(
@@ -102,6 +81,56 @@ class AnomalyGRU(torch.nn.Module):
         return self.classifier(
             last_output
         ).squeeze(1)
+
+
+# ============================================================
+# LOAD MODELS ONCE
+# ============================================================
+
+print("Loading YOLO...")
+
+yolo_model = YOLO(YOLO_MODEL_PATH)
+
+print("Loading V2 GRU...")
+
+gru_model = AnomalyGRU()
+
+checkpoint = torch.load(
+    GRU_MODEL_PATH,
+    map_location=DEVICE
+)
+
+if (
+    isinstance(checkpoint, dict)
+    and "model_state_dict" in checkpoint
+):
+    gru_model.load_state_dict(
+        checkpoint["model_state_dict"]
+    )
+else:
+    gru_model.load_state_dict(checkpoint)
+
+gru_model.to(DEVICE)
+gru_model.eval()
+
+
+# ============================================================
+# NORMALIZATION
+# ============================================================
+
+feature_mean = np.load(MEAN_PATH)
+
+feature_std = np.load(STD_PATH)
+
+feature_std[
+    feature_std == 0
+] = 1.0
+
+
+print("Device:", DEVICE)
+print("V2 features: 6")
+print("Gemini:", GEMINI_MODEL)
+print("Models loaded successfully.")
 
 
 # ============================================================
@@ -156,731 +185,659 @@ be inferred from the image.
 
 
 # ============================================================
-# LOAD YOLO
+# MAIN DETECTION FUNCTION
 # ============================================================
 
-print("Loading YOLO...")
-
-yolo_model = YOLO(
-    YOLO_MODEL_PATH
-)
-
-
-# ============================================================
-# LOAD GRU
-# ============================================================
-
-print("Loading V2 GRU...")
-
-gru_model = AnomalyGRU()
-
-checkpoint = torch.load(
-    GRU_MODEL_PATH,
-    map_location=DEVICE
-)
-
-if (
-    isinstance(checkpoint, dict)
-    and "model_state_dict" in checkpoint
+def detect_video(
+    input_video,
+    output_video="outputs/anomaly_result_v2.mp4",
+    report_path="outputs/incident_report.json",
+    display=True
 ):
 
-    gru_model.load_state_dict(
-        checkpoint["model_state_dict"]
+    os.makedirs("outputs", exist_ok=True)
+
+    # --------------------------------------------------------
+    # VIDEO
+    # --------------------------------------------------------
+
+    cap = cv2.VideoCapture(input_video)
+
+    if not cap.isOpened():
+
+        raise RuntimeError(
+            f"Unable to open video: {input_video}"
+        )
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    if fps == 0:
+        fps = 30
+
+    width = int(
+        cap.get(cv2.CAP_PROP_FRAME_WIDTH)
     )
 
-else:
-
-    gru_model.load_state_dict(
-        checkpoint
+    height = int(
+        cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
     )
 
-gru_model.to(DEVICE)
-gru_model.eval()
+    # --------------------------------------------------------
+    # OUTPUT VIDEO
+    # --------------------------------------------------------
 
-
-# ============================================================
-# NORMALIZATION
-# ============================================================
-
-feature_mean = np.load(
-    MEAN_PATH
-)
-
-feature_std = np.load(
-    STD_PATH
-)
-
-feature_std[
-    feature_std == 0
-] = 1.0
-
-
-print("Device:", DEVICE)
-print("V2 features: 6")
-print("Gemini:", GEMINI_MODEL)
-print("Models loaded successfully.")
-
-
-# ============================================================
-# VIDEO
-# ============================================================
-
-cap = cv2.VideoCapture(
-    INPUT_VIDEO
-)
-
-if not cap.isOpened():
-
-    raise RuntimeError(
-        f"Unable to open video: {INPUT_VIDEO}"
+    fourcc = cv2.VideoWriter_fourcc(
+        *"mp4v"
     )
 
-
-fps = cap.get(
-    cv2.CAP_PROP_FPS
-)
-
-if fps == 0:
-    fps = 30
-
-
-width = int(
-    cap.get(
-        cv2.CAP_PROP_FRAME_WIDTH
-    )
-)
-
-height = int(
-    cap.get(
-        cv2.CAP_PROP_FRAME_HEIGHT
-    ))
-
-
-# ============================================================
-# OUTPUT
-# ============================================================
-
-os.makedirs(
-    "outputs",
-    exist_ok=True
-)
-
-fourcc = cv2.VideoWriter_fourcc(
-    *"mp4v"
-)
-
-out = cv2.VideoWriter(
-    OUTPUT_VIDEO,
-    fourcc,
-    fps,
-    (width, height)
-)
-
-
-# ============================================================
-# TRACK HISTORY
-# ============================================================
-
-previous_positions = {}
-
-previous_speeds = {}
-
-previous_accelerations = {}
-
-previous_directions = {}
-
-feature_sequences = defaultdict(
-    lambda: deque(
-        maxlen=SEQUENCE_LENGTH
-    )
-)
-
-
-# ============================================================
-# INCIDENT STATE
-# ============================================================
-
-incident_detected = False
-
-incident_report = None
-
-incident_frame_saved = False
-
-
-# ============================================================
-# PROCESS VIDEO
-# ============================================================
-
-frame_number = 0
-
-print(
-    "\nStarting multimodal anomaly detection...\n"
-)
-
-
-while True:
-
-    success, frame = cap.read()
-
-    if not success:
-        break
-
-    frame_number += 1
-
-
-    # ========================================================
-    # YOLO + BYTE TRACK
-    # ========================================================
-
-    results = yolo_model.track(
-        frame,
-        persist=True,
-        tracker="bytetrack.yaml",
-        device=0,
-        verbose=False
+    out = cv2.VideoWriter(
+        output_video,
+        fourcc,
+        fps,
+        (width, height)
     )
 
-    boxes = results[0].boxes
+    # --------------------------------------------------------
+    # TRACK HISTORY
+    # --------------------------------------------------------
 
-    frame_anomaly = False
+    previous_positions = {}
 
-    frame_probability = 0.0
+    previous_speeds = {}
 
-    tracked_objects = []
+    previous_accelerations = {}
 
+    previous_directions = {}
 
-    # ========================================================
-    # PROCESS TRACKS
-    # ========================================================
-
-    for box in boxes:
-
-        if box.id is None:
-            continue
-
-
-        track_id = int(
-            box.id[0]
+    feature_sequences = defaultdict(
+        lambda: deque(
+            maxlen=SEQUENCE_LENGTH
         )
+    )
 
+    # --------------------------------------------------------
+    # INCIDENT STATE
+    # --------------------------------------------------------
 
-        # ----------------------------------------------------
-        # Object class
-        # ----------------------------------------------------
+    incident_detected = False
 
-        class_id = int(
-            box.cls[0]
-        )
+    incident_report = None
 
-        class_name = results[0].names[
-            class_id
-        ]
+    incident_frame_path = None
 
-        tracked_objects.append(
-            class_name
-        )
+    incident_frame_number = None
 
+    incident_confidence = 0.0
 
-        # ----------------------------------------------------
-        # Bounding box
-        # ----------------------------------------------------
+    incident_objects = []
 
-        x1, y1, x2, y2 = map(
-            int,
-            box.xyxy[0]
-        )
+    # --------------------------------------------------------
+    # PROCESS VIDEO
+    # --------------------------------------------------------
 
+    frame_number = 0
 
-        # ----------------------------------------------------
-        # Center
-        # ----------------------------------------------------
+    print(
+        f"\nStarting detection on: {input_video}\n"
+    )
 
-        center_x = (
-            x1 + x2
-        ) // 2
+    while True:
 
-        center_y = (
-            y1 + y2
-        ) // 2
+        success, frame = cap.read()
 
+        if not success:
+            break
+
+        frame_number += 1
 
         # ====================================================
-        # MOTION FEATURES
+        # YOLO + BYTE TRACK
         # ====================================================
 
-        previous_position = (
-            previous_positions.get(
-                track_id
-            )
+        results = yolo_model.track(
+            frame,
+            persist=True,
+            tracker="bytetrack.yaml",
+            device=0 if torch.cuda.is_available() else "cpu",
+            verbose=False
         )
 
-        previous_speed = (
-            previous_speeds.get(
-                track_id,
-                0.0
-            )
-        )
+        boxes = results[0].boxes
 
-        previous_acceleration = (
-            previous_accelerations.get(
-                track_id,
-                0.0
-            )
-        )
+        frame_anomaly = False
 
-        previous_direction = (
-            previous_directions.get(
-                track_id
-            )
-        )
+        frame_probability = 0.0
 
+        tracked_objects = []
 
-        if previous_position is None:
+        # ====================================================
+        # PROCESS TRACKS
+        # ====================================================
 
-            dx = 0.0
-            dy = 0.0
-            speed = 0.0
-            acceleration = 0.0
-            direction_change = 0.0
-            jerk = 0.0
+        for box in boxes:
 
-            current_direction = None
+            if box.id is None:
+                continue
 
-        else:
-
-            previous_x, previous_y = (
-                previous_position
+            track_id = int(
+                box.id[0]
             )
 
-            dx = (
-                center_x - previous_x
+            # ------------------------------------------------
+            # Object class
+            # ------------------------------------------------
+
+            class_id = int(
+                box.cls[0]
             )
 
-            dy = (
-                center_y - previous_y
-            )
-
-            speed = math.hypot(
-                dx,
-                dy
-            )
-
-            acceleration = (
-                speed - previous_speed
-            )
-
-
-            # Direction
-
-            if dx == 0 and dy == 0:
-
-                current_direction = (
-                    previous_direction
-                )
-
-            else:
-
-                current_direction = math.atan2(
-                    dy,
-                    dx
-                )
-
-
-            # Direction change
-
-            if (
-                current_direction is None
-                or previous_direction is None
-            ):
-
-                direction_change = 0.0
-
-            else:
-
-                angle_difference = (
-                    current_direction
-                    - previous_direction
-                )
-
-                angle_difference = (
-                    angle_difference + math.pi
-                ) % (
-                    2 * math.pi
-                ) - math.pi
-
-                direction_change = abs(
-                    angle_difference
-                )
-
-
-            # Jerk
-
-            jerk = (
-                acceleration
-                - previous_acceleration
-            )
-
-
-        # ====================================================
-        # UPDATE HISTORY
-        # ====================================================
-
-        previous_positions[
-            track_id
-        ] = (
-            center_x,
-            center_y
-        )
-
-        previous_speeds[
-            track_id
-        ] = speed
-
-        previous_accelerations[
-            track_id
-        ] = acceleration
-
-
-        if current_direction is not None:
-
-            previous_directions[
-                track_id
-            ] = current_direction
-
-
-        # ====================================================
-        # FEATURE VECTOR
-        # ====================================================
-
-        features = np.array(
-            [
-                dx,
-                dy,
-                speed,
-                acceleration,
-                direction_change,
-                jerk
-            ],
-            dtype=np.float32
-        )
-
-
-        # ====================================================
-        # NORMALIZATION
-        # ====================================================
-
-        features = (
-            features - feature_mean
-        ) / feature_std
-
-
-        # ====================================================
-        # SEQUENCE
-        # ====================================================
-
-        feature_sequences[
-            track_id
-        ].append(
-            features
-        )
-
-
-        probability = 0.0
-
-
-        # ====================================================
-        # GRU
-        # ====================================================
-
-        if len(
-            feature_sequences[
-                track_id
+            class_name = results[0].names[
+                class_id
             ]
-        ) == SEQUENCE_LENGTH:
 
-            sequence = np.array(
-                feature_sequences[
+            tracked_objects.append(
+                class_name
+            )
+
+            # ------------------------------------------------
+            # Bounding box
+            # ------------------------------------------------
+
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
+
+            # ------------------------------------------------
+            # Center
+            # ------------------------------------------------
+
+            center_x = (
+                x1 + x2
+            ) // 2
+
+            center_y = (
+                y1 + y2
+            ) // 2
+
+            # =================================================
+            # MOTION FEATURES
+            # =================================================
+
+            previous_position = (
+                previous_positions.get(
                     track_id
+                )
+            )
+
+            previous_speed = (
+                previous_speeds.get(
+                    track_id,
+                    0.0
+                )
+            )
+
+            previous_acceleration = (
+                previous_accelerations.get(
+                    track_id,
+                    0.0
+                )
+            )
+
+            previous_direction = (
+                previous_directions.get(
+                    track_id
+                )
+            )
+
+            if previous_position is None:
+
+                dx = 0.0
+                dy = 0.0
+                speed = 0.0
+                acceleration = 0.0
+                direction_change = 0.0
+                jerk = 0.0
+
+                current_direction = None
+
+            else:
+
+                previous_x, previous_y = (
+                    previous_position
+                )
+
+                dx = (
+                    center_x - previous_x
+                )
+
+                dy = (
+                    center_y - previous_y
+                )
+
+                speed = math.hypot(
+                    dx,
+                    dy
+                )
+
+                acceleration = (
+                    speed - previous_speed
+                )
+
+                # Direction
+
+                if dx == 0 and dy == 0:
+
+                    current_direction = (
+                        previous_direction
+                    )
+
+                else:
+
+                    current_direction = math.atan2(
+                        dy,
+                        dx
+                    )
+
+                # Direction change
+
+                if (
+                    current_direction is None
+                    or previous_direction is None
+                ):
+
+                    direction_change = 0.0
+
+                else:
+
+                    angle_difference = (
+                        current_direction
+                        - previous_direction
+                    )
+
+                    angle_difference = (
+                        angle_difference + math.pi
+                    ) % (
+                        2 * math.pi
+                    ) - math.pi
+
+                    direction_change = abs(
+                        angle_difference
+                    )
+
+                # Jerk
+
+                jerk = (
+                    acceleration
+                    - previous_acceleration
+                )
+
+            # =================================================
+            # UPDATE HISTORY
+            # =================================================
+
+            previous_positions[
+                track_id
+            ] = (
+                center_x,
+                center_y
+            )
+
+            previous_speeds[
+                track_id
+            ] = speed
+
+            previous_accelerations[
+                track_id
+            ] = acceleration
+
+            if current_direction is not None:
+
+                previous_directions[
+                    track_id
+                ] = current_direction
+
+            # =================================================
+            # FEATURE VECTOR
+            # =================================================
+
+            features = np.array(
+                [
+                    dx,
+                    dy,
+                    speed,
+                    acceleration,
+                    direction_change,
+                    jerk
                 ],
                 dtype=np.float32
             )
 
-            sequence = sequence.reshape(
-                SEQUENCE_LENGTH,
-                6
-            )
+            # =================================================
+            # NORMALIZATION
+            # =================================================
 
-            sequence_tensor = (
-                torch.from_numpy(
-                    sequence
+            features = (
+                features - feature_mean
+            ) / feature_std
+
+            # =================================================
+            # SEQUENCE
+            # =================================================
+
+            feature_sequences[
+                track_id
+            ].append(features)
+
+            probability = 0.0
+
+            # =================================================
+            # GRU
+            # =================================================
+
+            if len(
+                feature_sequences[
+                    track_id
+                ]
+            ) == SEQUENCE_LENGTH:
+
+                sequence = np.array(
+                    feature_sequences[
+                        track_id
+                    ],
+                    dtype=np.float32
                 )
-                .unsqueeze(0)
-                .to(DEVICE)
-            )
 
-
-            with torch.no_grad():
-
-                logits = gru_model(
-                    sequence_tensor
+                sequence = sequence.reshape(
+                    SEQUENCE_LENGTH,
+                    6
                 )
 
-                probability = torch.sigmoid(
-                    logits
-                ).item()
+                sequence_tensor = (
+                    torch.from_numpy(
+                        sequence
+                    )
+                    .unsqueeze(0)
+                    .to(DEVICE)
+                )
 
+                with torch.no_grad():
 
-            frame_probability = max(
-                frame_probability,
-                probability
+                    logits = gru_model(
+                        sequence_tensor
+                    )
+
+                    probability = torch.sigmoid(
+                        logits
+                    ).item()
+
+                frame_probability = max(
+                    frame_probability,
+                    probability
+                )
+
+                if (
+                    probability
+                    >= ANOMALY_THRESHOLD
+                ):
+
+                    frame_anomaly = True
+
+            # =================================================
+            # DRAW BOX
+            # =================================================
+
+            label = (
+                f"ID {track_id}"
+                f" | {class_name}"
+                f" | {probability:.2f}"
             )
 
+            cv2.rectangle(
+                frame,
+                (x1, y1),
+                (x2, y2),
+                (0, 255, 0),
+                2
+            )
 
-            if probability >= ANOMALY_THRESHOLD:
-
-                frame_anomaly = True
-
+            cv2.putText(
+                frame,
+                label,
+                (
+                    x1,
+                    max(y1 - 10, 20)
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 0),
+                2
+            )
 
         # ====================================================
-        # DRAW BOX
+        # GEMINI TRIGGER
         # ====================================================
 
-        label = (
-            f"ID {track_id}"
-            f" | {class_name}"
-            f" | {probability:.2f}"
-        )
+        if (
+            frame_anomaly
+            and not incident_detected
+        ):
+
+            incident_detected = True
+
+            incident_frame_number = frame_number
+
+            incident_confidence = (
+                frame_probability
+            )
+
+            incident_frame_path = (
+                "outputs/incident_frame.jpg"
+            )
+
+            cv2.imwrite(
+                incident_frame_path,
+                frame
+            )
+
+            incident_objects = list(
+                dict.fromkeys(
+                    tracked_objects
+                )
+            )
+
+            try:
+
+                incident_report = (
+                    analyze_incident(
+                        incident_frame_path,
+                        frame_probability,
+                        incident_objects
+                    )
+                )
+
+                with open(
+                    report_path,
+                    "w",
+                    encoding="utf-8"
+                ) as file:
+
+                    json.dump(
+                        {
+                            "frame": frame_number,
+                            "anomaly_confidence":
+                                frame_probability,
+                            "tracked_objects":
+                                incident_objects,
+                            "llm_analysis":
+                                incident_report
+                        },
+                        file,
+                        indent=4
+                    )
+
+                print(
+                    "\n===== INCIDENT REPORT ====="
+                )
+
+                print(
+                    incident_report
+                )
+
+                print(
+                    f"\nReport saved to: {report_path}"
+                )
+
+            except Exception as error:
+
+                print(
+                    "\nGemini analysis failed:"
+                )
+
+                print(error)
+
+        # ====================================================
+        # STATUS
+        # ====================================================
+
+        if frame_anomaly:
+
+            status = (
+                "ANOMALY DETECTED"
+                f" | Confidence: "
+                f"{frame_probability:.2f}"
+            )
+
+            status_color = (
+                0,
+                0,
+                255
+            )
+
+        else:
+
+            status = (
+                "NORMAL"
+                f" | Confidence: "
+                f"{1 - frame_probability:.2f}"
+            )
+
+            status_color = (
+                0,
+                255,
+                0
+            )
+
+        # ====================================================
+        # STATUS PANEL
+        # ====================================================
 
         cv2.rectangle(
             frame,
-            (x1, y1),
-            (x2, y2),
-            (0, 255, 0),
-            2
+            (10, 10),
+            (600, 60),
+            (0, 0, 0),
+            -1
         )
 
         cv2.putText(
             frame,
-            label,
-            (
-                x1,
-                max(y1 - 10, 20)
-            ),
+            status,
+            (20, 45),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 255, 0),
+            0.7,
+            status_color,
             2
         )
 
+        # ====================================================
+        # FRAME NUMBER
+        # ====================================================
 
-    # ========================================================
-    # GEMINI TRIGGER
-    # ========================================================
-
-    if (
-        frame_anomaly
-        and not incident_detected
-    ):
-
-        incident_detected = True
-
-        incident_frame_path = (
-            "outputs/incident_frame.jpg"
+        cv2.putText(
+            frame,
+            f"Frame: {frame_number}",
+            (
+                10,
+                height - 20
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2
         )
 
-        cv2.imwrite(
-            incident_frame_path,
-            frame
-        )
+        # ====================================================
+        # WRITE OUTPUT
+        # ====================================================
 
-        unique_objects = list(
-            dict.fromkeys(
-                tracked_objects
-            )
-        )
+        out.write(frame)
 
+        # ====================================================
+        # DISPLAY
+        # ====================================================
 
-        try:
+        if display:
 
-            incident_report = analyze_incident(
-                incident_frame_path,
-                frame_probability,
-                unique_objects
+            cv2.imshow(
+                "Multimodal Anomaly Detection",
+                frame
             )
 
-
-            with open(
-                REPORT_PATH,
-                "w",
-                encoding="utf-8"
-            ) as file:
-
-                json.dump(
-                    {
-                        "frame": frame_number,
-                        "anomaly_confidence":
-                            frame_probability,
-                        "tracked_objects":
-                            unique_objects,
-                        "llm_analysis":
-                            incident_report
-                    },
-                    file,
-                    indent=4
-                )
-
-
-            print(
-                "\n===== INCIDENT REPORT ====="
+            key = (
+                cv2.waitKey(1)
+                & 0xFF
             )
 
-            print(
-                incident_report
-            )
-
-            print(
-                f"\nReport saved to: {REPORT_PATH}"
-            )
-
-
-        except Exception as error:
-
-            print(
-                "\nGemini analysis failed:"
-            )
-
-            print(error)
-
+            if key == ord("q"):
+                break
 
     # ========================================================
-    # STATUS
+    # CLEANUP
     # ========================================================
 
-    if frame_anomaly:
+    cap.release()
+    out.release()
+    if display:
+        cv2.destroyAllWindows()
 
-        status = (
-            "ANOMALY DETECTED"
-            f" | Confidence: "
-            f"{frame_probability:.2f}"
+    print("\nDetection complete.")
+    print(f"Output video: {output_video}")
+
+    # ========================================================
+    # RETURN API-FRIENDLY RESULT
+    # ========================================================
+
+    return {
+        "status": "completed",
+        "output_video": output_video,
+        "incident_detected": incident_detected,
+        "incident_frame": incident_frame_number,
+        "anomaly_confidence": incident_confidence,
+        "tracked_objects": incident_objects,
+        "incident_report": incident_report,
+        "report_path": (
+            report_path
+            if incident_report
+            else None
         )
-
-        status_color = (
-            0,
-            0,
-            255
-        )
-
-    else:
-
-        status = (
-            "NORMAL"
-            f" | Confidence: "
-            f"{1 - frame_probability:.2f}"
-        )
-
-        status_color = (
-            0,
-            255,
-            0
-        )
-
-
-    # ========================================================
-    # STATUS PANEL
-    # ========================================================
-
-    cv2.rectangle(
-        frame,
-        (10, 10),
-        (600, 60),
-        (0, 0, 0),
-        -1
-    )
-
-    cv2.putText(
-        frame,
-        status,
-        (20, 45),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        status_color,
-        2
-    )
-
-
-    # ========================================================
-    # FRAME NUMBER
-    # ========================================================
-
-    cv2.putText(
-        frame,
-        f"Frame: {frame_number}",
-        (
-            10,
-            height - 20
-        ),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        (255, 255, 255),
-        2
-    )
-
-
-    # ========================================================
-    # WRITE
-    # ========================================================
-
-    out.write(
-        frame
-    )
-
-
-    # ========================================================
-    # DISPLAY
-    # ========================================================
-
-    cv2.imshow(
-        "Multimodal Anomaly Detection",
-        frame
-    )
-
-
-    key = (
-        cv2.waitKey(1)
-        & 0xFF
-    )
-
-    if key == ord("q"):
-        break
+    }
 
 
 # ============================================================
-# CLEANUP
+# STANDALONE EXECUTION
 # ============================================================
 
-cap.release()
+if __name__ == "__main__":
 
-out.release()
-
-cv2.destroyAllWindows()
-
-
-print(
-    "\nDetection complete."
-)
-
-print(
-    f"Output video: {OUTPUT_VIDEO}"
-)
-
-if incident_report:
-
-    print(
-        f"Incident report: {REPORT_PATH}"
+    result = detect_video(
+        input_video="videos/sample2.mp4"
     )
 
-else:
-
+    print("\nFinal result:")
     print(
-        "No anomaly triggered the VLM."
+        json.dumps(
+            result,
+            indent=4
+        )
     )
