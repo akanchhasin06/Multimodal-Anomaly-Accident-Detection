@@ -28,3 +28,13 @@ UCF-Crime/
 
 # Python
 *.log
+
+.env
+.venv/
+__pycache__/
+*.mp4
+outputs/
+dataset_features/
+dataset_features_v2/
+sequences/
+sequences_v2/
